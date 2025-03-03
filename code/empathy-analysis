@@ -1,0 +1,592 @@
+---
+title: "Study 2 Revised"
+output: html_document
+date: "2024-12-05"
+---
+
+```{r setup, include=FALSE}
+
+# Load necessary libraries
+library(data.table)
+library(dplyr)
+library(readxl)
+library(signal)
+library(tidyverse)
+library(afex)
+library(ggpubr)  # For arranging plots side by side
+```
+
+# Load in data
+## Questionnaire Data
+C = cartoon condition
+R = Realistic condition
+
+```{r}
+## Read the CSV file
+
+orig2 <- read_csv("Study-2-quests_2024-10-21.csv", show_col_types = FALSE) |>
+  dplyr::filter(user_status == "guest") |>
+  dplyr::filter(!session_id %in% c(149322, 149184)) |>
+  select(session_id, q_name, dv) |>
+  pivot_wider(names_from = q_name, values_from = dv) |>
+  pivot_longer(cols = MDEES_1_RC:mc_1, 
+               names_to = "q_name", 
+               values_to = "dv") |>
+  # Correction of human errors
+  mutate(condition = case_when(
+    participant_id == "14_F" ~ "R", 
+    participant_id == "02_M" ~ "R", 
+    TRUE ~ condition  # Keep other values as they are
+  ))
+
+```
+
+### Participant number check
+```{r}
+# Count unique user_id by user_sex before any transformation
+original_counts <- orig2 %>%
+  group_by(gender) %>%
+  summarise(unique_user_count = n_distinct(participant_id))
+
+# Count unique user_id by user_sex and condition 
+original_counts <- orig2 %>%
+  group_by(gender, condition) %>%
+  summarise(unique_user_count = n_distinct(participant_id),
+            .groups = 'drop')
+
+
+# Plot unique user counts by gender and condition
+ggplot(original_counts, aes(x = condition, y = unique_user_count, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(
+    title = "Unique User Count by Gender and Condition",
+    x = "Condition",
+    y = "Unique User Count"
+  ) +
+  theme_minimal()
+
+```
+
+
+```{r}
+numdat <- orig2 %>%
+  # Separate q_name into quest and q_n
+  separate(q_name, into = c("quest", "q_n"), sep = "_", extra = "drop", fill = "right") %>%
+  # Assign subscale based on quest and q_n
+  mutate(subscale = case_when(
+    quest == "MSE" & q_n %in% c("1", "2", "3", "4") ~ "AE",
+    quest == "MSE" & q_n %in% c("5", "6", "7", "8") ~ "CE",
+    quest == "MSE" & q_n %in% c("9", "10", "11", "12") ~ "AssE",
+    quest == "MDEES" & q_n %in% c("1", "20", "25") ~ "RC",
+    quest == "MDEES" & q_n %in% c("3", "5", "6", "8", "12", "18", "24", "28") ~ "PS",
+    quest == "MDEES" & q_n %in% c("4", "9", "13", "27") ~ "EA",
+    quest == "MDEES" & q_n %in% c("10", "15", "16", "21") ~ "FfO",
+    quest == "MDEES" & q_n %in% c("11", "17") ~ "EC",
+    TRUE ~ ""
+  )) |>
+  # Standardize quest names
+  mutate(quest = case_when(
+    quest == "CP" ~ "Co-Presence",
+    TRUE ~ quest  # Keep other quest names unchanged
+  ))
+
+
+```
+
+### Scoring codes for questionnaires
+
+
+```{r}
+# Scoring codes
+qscoring <- list(
+  "MSE" = c("Not at all" = 0, 
+            "Not at all (0)" = 0,
+            "0" = 0,
+            "1" = 1, 
+            "2" = 2, 
+            "3" = 3,
+            "4" = 4,
+            "5" = 5,
+            "Entirely (6)" = 6,
+            "Entirely 6" = 6,
+            "6" = 6),
+  "MDEES" = c("Strongly Disagree" = 1, 
+              "Slightly Disagree" = 2, 
+              "Neutral" = 3,
+              "Slightly Agree" = 4, 
+              "Strongly Agree" = 5),
+  "Co-Presence" = c(
+    "1" = 1, "2" = 2, "3" = 3, "4" = 4, "5" = 5, "6" = 6, "7" = 7,
+    "Not at all" = 1, "Completely" = 7, 
+    "Not responsive" = 1, "Completely responsive" = 7,
+    "Extremely artificial" = 1, "Completely natural" = 7,
+    "Not compelling" = 1, "Very compelling" = 7,
+    "Not consistent" = 1, "Very consistent" = 7,
+    "Very closely" = 7, "Extremely" = 7,
+    "Completely engrossed" = 7, "No delays" = 1, "Long delays" = 7,
+    "Not proficient" = 1, "Very proficient" = 7,
+    "Prevented task performance" = 7, "Interfered greatly" = 7,
+    "Completely" = 7, "Not at all" = 1, "Less than one minute" = 7
+  )
+)
+
+scoredat <- numdat %>%
+  dplyr::filter(quest %in% c("MDEES", "MSE", "Co-Presence")) |>
+  mutate(dv_num = case_when(
+    quest == "MDEES" ~ qscoring[["MDEES"]][dv],
+    quest == "MSE" ~ qscoring[["MSE"]][dv],
+    quest == "Co-Presence" ~ qscoring[["Co-Presence"]][dv],
+    TRUE ~ NA
+  ))
+
+```
+
+### Reverse scoring Co-presence questionnaire
+PRESENCE QUESTIONNAIRE
+(Witmer & Singer, Vs. 3.0, Nov. 1994)*
+Revised by the UQO Cyberpsychology Lab (2004)
+
+Scoring :
+Total : Items 1 to 19 (reverse items 14, 17, 18)
+ « Realism » : Items 3 + 4 + 5 + 6 + 7 + 10 + 13 
+ « Possibility to act » : Items 1 + 2 + 8 + 9
+ « Quality of interface » : Items (all reversed) 14 + 17 + 18 
+ « Possibility to examine » : Items 11 + 12 + 19
+ « Self-evaluation of performance » : Items 15 + 16
+Co-presence modified = MODIFIED : 4,7,9,10,13,15, 16,17 (reversed)
+# Scoring questionnaires
+## Co-presence reverse scoring
+```{r}
+copresence_scoring <- scoredat %>%
+  dplyr::filter(quest == "Co-Presence") %>%
+  mutate(
+    # Reverse scoring only for item 17
+    dv_num = case_when(
+      q_n == 17 ~ 8 - dv_num,  # Reverse scoring for item 17
+      TRUE ~ dv_num  # Keep others unchanged
+    )
+  ) %>%
+  # Total Co-presence score for specific items 4, 7, 9, 10, 13, 15, 16, and 17
+  dplyr::filter(q_n %in% c(4, 7, 9, 10, 13, 15, 16, 17)) |>
+  summarize(
+    Total_CoPresence = sum(dv_num),
+    .by = c(participant_id, condition, gender)
+  )
+
+```
+
+
+
+### MDEES scoring
+
+Add the following items together for each scale, and divide by the number of items: 
+
+ * Suffering (3, 5, 6, 8, 12, 18, 24, 28); 
+ * Positive Sharing (14, 22, 23, 29, 30);
+ * Responsive Crying (1, 20, 25); 
+ * Emotional Attention (4, 9, 13, 27); 
+ * Feel for Others (10, 15, 16, 21); 
+ * Emotional Contagion (11, 17). 
+ 
+Take the mean of these sub-scales to compute a General Empathy scale. 
+Citation: The Multidimesional Emotional Empathy Scale (Caruso & Mayer, 1998)
+```{r}
+mdees_subscales <- scoredat %>%
+  dplyr::filter(quest == "MDEES") %>%
+  dplyr::filter(subscale != "") %>%
+  group_by(participant_id, condition, subscale, gender) %>%
+  summarize(
+    score = mean(dv_num),
+    .groups = "drop"
+  )
+
+# calculate general empathy score
+mdees_data <- mdees_subscales %>%
+  group_by(participant_id, condition, gender) %>%
+  summarise(score = mean(score),
+            .groups = "drop") %>%
+  mutate(subscale = "GE")
+
+
+ 
+```
+
+### MSE scoring
+Citation: https://www.researchgate.net/figure/tems-and-Dimensions-of-the-State-Empathy-Scale_tbl1_233464674
+
+Scoring:Three 3-item Likert subscales were designed to measure state levels of cognitive, affective, and compassionate empathy based on definitions adapted from Ekman (2003): “understanding how someone is feeling, but not necessarily also feeling it” (cognitive); “physically feeling the same way as another person is feeling” (affective); and “in-the-moment feelings of compassion, sympathy or concern” (compassion). Participants rated their agreement with each item on a 7-point Likert scale (0 = not at all, 6 = entirely).
+```{r}
+mse_subscales <- scoredat %>%
+  dplyr::filter(quest == "MSE") %>%  
+  group_by(participant_id, condition, gender, subscale) %>%  # Group by participant and other relevant factors
+  summarize(
+    state_empathy_score = mean(dv_num, na.rm = TRUE),  # Average across relevant subscales
+    .groups = "drop"
+  )
+
+# Total state empathy score per participant
+mse_data <- scoredat %>%
+  dplyr::filter(quest == "MSE") %>%  
+  group_by(participant_id, condition, gender) %>%  # Group by participant and other relevant factors
+  summarize(
+    state_empathy_score = mean(dv_num, na.rm = TRUE),  # Average across relevant subscales
+    .groups = "drop"
+  )
+
+```
+
+
+### Combining scored questionnaires
+```{r}
+combined_data <- mdees_data %>%
+  left_join(copresence_scoring, by = c("participant_id", "condition", "gender")) %>%
+  left_join(mse_data, by = c("participant_id", "condition", "gender")) %>%
+  select(participant_id, condition, Total_CoPresence, score, state_empathy_score, gender) %>%
+  mutate(mdees_ge = score) %>%  # Rename 'score' to 'mdees_ge'
+  select(-score)  # Remove original 'score' column
+
+```
+
+
+
+# Visualisation of questionnaire data
+## Descriptive stats
+```{r}
+scoredat$age <- as.numeric(as.character(scoredat$age))
+
+# Remove duplicates based on participant_id
+scoredat_unique <- scoredat %>%
+  distinct(participant_id, .keep_all = TRUE)  # Keeps only the first occurrence of each participant_id
+
+# Calculate count, average, standard deviation, and age range per gender
+descriptives <- scoredat_unique %>%
+  group_by(gender) %>%
+  summarise(
+    count = n(),                              
+    average_age = mean(age),    
+    sd_age = sd(age))
+
+# View descriptives
+descriptives
+
+# Calculate age range per gender
+age_range_per_gender <- scoredat_unique %>%
+  group_by(gender) %>%
+  summarise(
+    min_age = min(age),
+    max_age = max(age)
+  )
+
+# View age range per gender
+age_range_per_gender
+
+
+  
+```
+
+
+#### Bar graph
+```{r}
+long_data <- combined_data %>%
+  gather(key = "score_type", value = "score", 
+         Total_CoPresence, state_empathy_score, mdees_ge) %>%
+  mutate(score = case_when(
+    score_type == "Total_CoPresence" ~ score / 8,  # Normalize Co-Presence scores for 8 q
+    TRUE ~ score  # Keep other scores unchanged
+  ))
+
+ggplot(long_data, aes(x = score, fill = score_type)) +
+  geom_histogram(binwidth = 0.25, colour = "black", position = "identity", alpha = 0.7) +  # Adjust opacity for better visibility
+  facet_grid(gender ~ score_type + condition) +  # Facet by gender, score_type, and condition
+  scale_x_continuous(breaks = 1:7, limits = c(1, 7)) +  # Adjust x-axis from 1 to 7 for all scores
+  scale_fill_manual(values = c("Total_CoPresence" = "royalblue2", 
+                               "state_empathy_score" = "lightsalmon2", 
+                               "mdees_ge" = "red4")) +  # Customize fill colors for each score type
+  theme_minimal() +  # Cleaner theme
+  theme(
+    legend.position = "none",  # Hide legend
+    axis.text.x = element_text(angle = 45, hjust = 1),  # Rotate x-axis labels for readability
+    panel.spacing = unit(1, "lines")  # Adjust space between facets
+  )
+
+
+```
+#### Box Plots
+```{r}
+quest_colours <- c("Female" = "violetred2", "Male" = "turquoise3", "Nonbinary"= "mediumorchid3")
+
+# For MDEES
+plot_mdees <- combined_data %>%
+  dplyr::filter(!is.na(mdees_ge)) %>%
+  ggplot(aes(x = condition, y = mdees_ge, fill = gender)) +
+  geom_boxplot() +
+  scale_fill_manual(values = quest_colours) +  # Use quest_colours defined above
+  facet_wrap(~ gender) +  # Facet by Gender
+  theme_minimal() +
+  labs(
+    title = "Distribution of MultiDimensional Emotional Empathy Scale (MDEES) Scores by Condition and Gender",
+    x = "Condition", y = "MDEES Score"
+  )
+
+# Print the plot
+print(plot_mdees)
+
+
+# for MSE
+plot_mse <- combined_data %>%
+  dplyr::filter(!is.na(state_empathy_score)) %>%
+  ggplot(aes(x = condition, y = state_empathy_score, fill = gender)) +
+  geom_boxplot() +
+  scale_fill_manual(values = quest_colours) +  # Use quest_colours defined above
+  facet_wrap(~ gender) +  # Facet by Gender
+  theme_minimal() +
+  labs(
+    title = "Distribution of Measure of State Empathy (MSE) Scores by Condition and Gender",
+    x = "Condition", y = "MSE Score"
+  )
+
+# Print the plot
+print(plot_mse)
+
+# for Co-presence
+standardised_cop <- combined_data %>%
+  mutate(Standardised_CoPresence = Total_CoPresence / 8) %>%  # Standardise to 1-7 scale
+  select(condition, gender, Standardised_CoPresence, everything())  # Retain relevant columns
+
+
+
+plot_cop <- standardised_cop %>%
+  dplyr::filter(!is.na(Standardised_CoPresence)) %>%
+  ggplot(aes(x = condition, y = Standardised_CoPresence, fill = gender)) +
+  geom_boxplot() +
+  scale_fill_manual(values = quest_colours) +  # Use quest_colours defined above
+  facet_wrap(~ gender) +  # Facet by Gender
+  theme_minimal() +
+  labs(
+    title = "Distribution of Co-Presence Scores by Condition and Gender",
+    x = "Condition", y = "Standardised Co-presence Score"
+  )
+
+# Print the plot
+print(plot_cop)
+
+
+```
+#### Scatter plots
+```{r}
+
+# Ensure consistent capitalization and recode condition
+combined_data <- combined_data %>%
+  mutate(
+    gender = tolower(gender),  # Ensure consistent capitalization
+    condition = factor(condition, levels = c("R", "C"), labels = c("Realistic", "Cartoon")),  # Recode condition
+    group = interaction(gender, condition, sep = " ")
+  )
+# Scatter plot for Realistic condition
+plot_realistic <- combined_data %>%
+  dplyr::filter(condition == "Realistic") %>%
+  ggplot(aes(x = mdees_ge, y = state_empathy_score, colour = gender)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, aes(group = gender)) +
+  scale_colour_manual(
+    name = "Gender",
+    values = c("female" = "violetred2", "male" = "turquoise3", "nonbinary" = "mediumorchid3"),
+    labels = c("Female", "Male", "Nonbinary")
+  ) +
+  labs(
+    title = "Realistic Condition: MDEES vs MSE",
+    x = "MDEES Score",
+    y = "MSE Score"
+  ) +
+  theme_minimal()
+
+# Scatter plot for Cartoon condition
+plot_cartoon <- combined_data %>%
+  dplyr::filter(condition == "Cartoon") %>%
+  ggplot(aes(x = mdees_ge, y = state_empathy_score, colour = gender)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE, aes(group = gender)) +
+  scale_colour_manual(
+    name = "Gender",
+    values = c("female" = "violetred2", "male" = "turquoise3", "nonbinary" = "mediumorchid3"),
+    labels = c("Female", "Male", "Nonbinary")
+  ) +
+  labs(
+    title = "Cartoon Condition: MDEES vs MSE",
+    x = "MDEES Score",
+    y = "MSE Score"
+  ) +
+  theme_minimal()
+
+# Arrange plots side by side
+ggarrange(plot_realistic, plot_cartoon, ncol = 2, nrow = 1)
+```
+#### Video analysis visualisation
+```{r}
+# Create a data frame with the participant data
+video_data <- data.frame(
+  Participant_ID = c("01_F", "01_M", "02_F", "02_M", "03_F", "03_M", 
+                     "04_F", "04_M", "05_F", "05_M", "06_F", "06_M", 
+                     "07_F", "07_M", "08_F", "08_M", "09_F", "09_M", 
+                     "10_F", "10_M", "11_F", "11_M", "12_F", "12_M", 
+                     "13_F", "13_M", "14_F", "14_M", "15_F", "15_M"),
+  Condition = c("R", "C", "R", "R", "R", "C", 
+                "R", "C", "R", "C", "R", "C", 
+                "R", "C", "C", "R", "C", "C", 
+                "C", "R", "C", "R", "C", "R", 
+                "C", "R", "R", "R", "C", "C"),
+  Percentage = c("94%", "100%", "100%", "100%", "94%", "88%", 
+                 "100%", "72%", "100%", "100%", "100%", "100%", 
+                 "100%", "96%", "96%", "60%", "100%", "100%", 
+                 "100%", "96%", "100%", "92%", "48%", "92%", 
+                 "100%", "100%", "100%", "98%", "100%", "100%")
+)
+
+# Display the data frame
+print(video_data)
+
+# Convert the Percentage column from character to numeric
+video_data$Percentage <- as.numeric(gsub("%", "", video_data$Percentage))
+
+
+# Create a histogram of the percentage data by condition
+ggplot(video_data, aes(x = Percentage, fill = Condition)) +
+  geom_histogram(binwidth = 5, colour = "black", alpha = 0.7) +
+  labs(title = "Histogram of Percentages of Time the Avatar was viewed, across Conditions",
+       x = "Percentage",
+       y = "Frequency") +
+  facet_wrap(~ Condition) +  # Create a separate histogram for each condition
+  theme_minimal() +
+  scale_fill_manual(values = c("C" = "thistle", "R" = "lightcoral"))  # Customise colours for conditions
+
+
+```
+
+
+# Data Analysis
+
+### Averages for gender, condition & questionnaire
+```{r}
+gender_avg <- combined_data %>%
+  group_by(gender) %>%
+  summarize(
+    mdees_ge_avg = mean(mdees_ge),
+    state_empathy_score_avg = mean(state_empathy_score),
+    Total_CoPresence_avg = mean(Total_CoPresence),
+    .groups = "drop"
+  )
+
+
+condition_avg <- combined_data %>%
+  group_by(condition) %>%
+  summarize(
+    mdees_ge_avg = mean(mdees_ge),
+    state_empathy_score_avg = mean(state_empathy_score),
+    Total_CoPresence_avg = mean(Total_CoPresence),
+    .groups = "drop"
+  )
+
+```
+
+## Manipulation check
+```{r}
+# Filter the manipulation check data
+manipulation_check <- orig2[grepl("mc_1", orig2$q_name), c("participant_id", "age", "dv", "q_name", "condition", "gender")]
+
+# Print the resulting dataframe
+print(manipulation_check)
+
+# Create a stacked bar graph showing condition
+ggplot(manipulation_check, aes(x = dv, fill = condition)) +
+  geom_bar(position = "stack") +  # Use stack position for the bars
+  labs(title = "Manipulation Check of Perceived Realism of Avatar Condition",
+       x = "Perceived Realism of Avatar Condition",
+       y = "Number of Participants",
+       fill = "Condition") +
+  theme_minimal() +  # Optional: minimal theme for aesthetics
+  scale_fill_manual(values = c("C" = "thistle", "R" = "lightcoral")) +  # Customize colours for gender
+  facet_wrap(~ condition)  # Create separate plots for each condition
+
+```
+
+#### Remove NB data for analysis
+```{r}
+# Exclude nonbinary participants and rename the df
+combined_data_mf <- combined_data %>%
+  dplyr::filter(gender != "nonbinary")  
+```
+
+### RQ1 : Two-Way ANCOVA for State Empathy
+A two-way ANCOVA was conducted to examine the effect of condition (C vs. R) and user_sex (female vs. male) on State Empathy scores, while controlling for the influence of MDEES (trait empathy) scores. 
+```{r}
+
+# Two-Way ANCOVA with Interaction Effect for MSE
+ancova_interaction_MSE <- aov(state_empathy_score ~ condition * gender + mdees_ge, data = combined_data_mf)
+
+# Display the summary of the ANCOVA
+ancova_summary_interaction <- summary(ancova_interaction_MSE)
+print(ancova_summary_interaction)
+```
+## RQ2: Interaction Analysis in One-Way ANCOVA
+RQ2: Does increased VR avatar morphological realism result in increased levels of co-presence?  
+```{r}
+# One-Way ANCOVA for Co-Presence with Condition and Controlling for MDEES
+ancova_one_way_CoP <- aov(Total_CoPresence ~ condition + mdees_ge, data = combined_data_mf)
+
+# Check the results
+summary(ancova_one_way_CoP)
+
+
+
+```
+
+## RQ3: Two-Way ANCOVA for Gender
+ Effect of VR avatar morphological realism on state empathy (MSE scores) by gender
+```{r}
+
+# Run the Two-Way ANCOVA for State Empathy (MSE) by Gender and Condition, controlling for MDEES
+ancova_model_state_empathy <- aov(state_empathy_score ~ condition * gender + mdees_ge, data = combined_data_mf)
+
+# Display the ANCOVA summary
+summary(ancova_model_state_empathy)
+
+
+
+```
+
+## RQ4: Linear regression model 
+State empathy (MSE) is the dependent variable and Co-Presence is the independent variable, to assess whether increased levels of Co-Presence result in increased state empathy.
+
+```{r}
+
+# Fit the linear model for all conditions combined
+lm_model_all <- lm(state_empathy_score ~ `Total_CoPresence`, data = combined_data_mf)
+
+# Summary of the model 
+summary(lm_model_all)
+
+# Scatter plot with regression line for the overall trend
+ggplot(combined_data_mf, aes(x = `Total_CoPresence`, y = state_empathy_score)) +
+  geom_point(aes(colour = condition)) +  # Scatter plot points, coloured by condition
+  geom_smooth(method = "lm", se = TRUE, colour = "black") +  # Regression line with confidence intervals for overall trend
+  labs(title = "Co-Presence vs State Empathy (MSE) by Condition",
+       x = "Co-Presence",
+       y = "State Empathy (MSE)",
+       colour = "Condition") +  # Label for the legend
+  theme_minimal() +
+  scale_colour_manual(values = c("Cartoon" = "thistle4", "Realistic" = "lightcoral"))  
+```
+
+## RQ5: Multiple Regression Model
+To examine whether co-presence moderates the relationship between trait empathy (MDEES) and state empathy (MSE), a regression analysis was conducted including MDEES, Co-Presence, and their interaction term as predictors of MSE.  
+```{r}
+# Create the interaction term between Trait Empathy (MDEES) and Co-Presence
+combined_data_mf$interaction_term <- combined_data_mf$mdees_ge * combined_data_mf$`Total_CoPresence`
+
+# Run the regression model
+regression_model <- lm(state_empathy_score ~ mdees_ge + `Total_CoPresence` + interaction_term, data = combined_data_mf)
+
+# Summary of the model
+summary(regression_model)
+
+```
