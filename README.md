@@ -9,5 +9,5 @@ This project explores how varying levels of avatar realism in virtual reality (V
 Avatar Realism Comparison:
 The following image showcases the differences in avatar realism used in this study:
 <div style="text-align:center;">
-  <img src="./images/avatar.png" alt="Avatar Realism Comparison">
+  <img src="images/avatar.png" alt="Avatar Realism Comparison">
 </div>
